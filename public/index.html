@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HTML a PDF</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --panel: #fff; --text: #1b1b1b; --muted: #6b6b6b;
+    --border: #dddcd7; --accent: #1f5eff; --accent-text: #fff; --error: #c62828;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141414; --panel: #1e1e1e; --text: #ececec; --muted: #9a9a9a;
+      --border: #333; --accent: #5b8cff; --accent-text: #0b0b0b; --error: #ff7070; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.lead { margin: 0 0 20px; color: var(--muted); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; min-width: 0; }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
+  textarea { width: 100%; height: 360px; resize: vertical; border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg); color: var(--text); }
+  textarea.drag { outline: 2px dashed var(--accent); outline-offset: -4px; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-top: 12px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  label.inline { flex-direction: row; align-items: center; gap: 6px; color: var(--text); }
+  input[type=number], input[type=url], select { font: inherit; padding: 6px 8px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--bg); color: var(--text); }
+  input[type=number] { width: 96px; }
+  input[type=url] { width: 100%; }
+  .grow { flex: 1 1 220px; }
+  button { font: inherit; font-weight: 600; padding: 10px 18px; border-radius: 8px; border: 0; cursor: pointer;
+    background: var(--accent); color: var(--accent-text); }
+  button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); font-weight: 500; padding: 6px 12px; }
+  button:disabled { opacity: .6; cursor: progress; }
+  .status { margin-top: 10px; font-size: 13px; color: var(--muted); min-height: 1.5em; }
+  .status.error { color: var(--error); }
+  .preview-wrap { position: relative; width: 100%; height: 520px; overflow: hidden; border: 1px solid var(--border);
+    border-radius: 8px; background: #fff; }
+  .preview-wrap iframe { position: absolute; top: 0; left: 0; border: 0; transform-origin: 0 0; background: #fff; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>HTML a PDF</h1>
+  <p class="lead">Pega tu HTML o sube un archivo y descárgalo como PDF, tal como se ve en pantalla.</p>
+
+  <div class="grid">
+    <section class="panel">
+      <h2>HTML</h2>
+      <textarea id="html" spellcheck="false" placeholder="Pega aquí tu HTML, o arrastra un archivo .html"></textarea>
+      <div class="row">
+        <button class="secondary" id="pick" type="button">Subir archivo…</button>
+        <input type="file" id="file" accept=".html,.htm,text/html" hidden>
+        <span class="hint" id="fname"></span>
+      </div>
+
+      <div class="row">
+        <label>Ancho de pantalla (px)
+          <input type="number" id="width" value="1280" min="320" max="3840" step="10">
+        </label>
+        <label>Formato
+          <select id="mode">
+            <option value="single">Una página larga (sin cortes)</option>
+            <option value="a4">Páginas A4</option>
+          </select>
+        </label>
+        <label class="inline" id="landscapeWrap" hidden><input type="checkbox" id="landscape"> Horizontal</label>
+        <label id="marginWrap" hidden>Margen (mm)
+          <input type="number" id="margin" value="0" min="0" max="50" step="1">
+        </label>
+      </div>
+      <div class="row">
+        <label class="grow">URL base para rutas relativas (opcional)
+          <input type="url" id="baseUrl" placeholder="https://midominio.com/">
+        </label>
+      </div>
+      <div class="row">
+        <button id="go" type="button">Descargar PDF</button>
+      </div>
+      <div class="status" id="status" role="status"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Vista previa (<span id="pw">1280</span> px)</h2>
+      <div class="preview-wrap" id="wrap"><iframe id="preview" sandbox="allow-same-origin" title="Vista previa"></iframe></div>
+      <p class="hint">La vista previa no ejecuta scripts; el PDF sí los ejecuta antes de capturar.</p>
+    </section>
+  </div>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const html = $("html"), file = $("file"), statusEl = $("status"), preview = $("preview"), wrap = $("wrap");
+  let filename = "documento";
+
+  function setStatus(msg, isError) {
+    statusEl.textContent = msg || "";
+    statusEl.classList.toggle("error", Boolean(isError));
+  }
+
+  function fitPreview() {
+    const w = Math.max(320, Number($("width").value) || 1280);
+    $("pw").textContent = w;
+    const scale = wrap.clientWidth / w;
+    preview.style.width = w + "px";
+    preview.style.height = wrap.clientHeight / scale + "px";
+    preview.style.transform = `scale(${scale})`;
+  }
+
+  let t;
+  function updatePreview() {
+    clearTimeout(t);
+    t = setTimeout(() => { preview.srcdoc = html.value; fitPreview(); }, 300);
+  }
+
+  function loadFile(f) {
+    if (!f) return;
+    filename = f.name;
+    $("fname").textContent = f.name;
+    const reader = new FileReader();
+    reader.onload = () => { html.value = reader.result; updatePreview(); };
+    reader.readAsText(f);
+  }
+
+  $("pick").onclick = () => file.click();
+  file.onchange = () => loadFile(file.files[0]);
+  html.addEventListener("input", updatePreview);
+  html.addEventListener("dragover", (e) => { e.preventDefault(); html.classList.add("drag"); });
+  html.addEventListener("dragleave", () => html.classList.remove("drag"));
+  html.addEventListener("drop", (e) => {
+    e.preventDefault(); html.classList.remove("drag");
+    loadFile(e.dataTransfer.files[0]);
+  });
+  $("width").addEventListener("input", fitPreview);
+  window.addEventListener("resize", fitPreview);
+  $("mode").onchange = () => {
+    const a4 = $("mode").value === "a4";
+    $("landscapeWrap").hidden = !a4;
+    $("marginWrap").hidden = !a4;
+  };
+
+  $("go").onclick = async () => {
+    if (!html.value.trim()) return setStatus("Primero pega o sube un HTML.", true);
+    const btn = $("go");
+    btn.disabled = true;
+    setStatus("Generando PDF…");
+    try {
+      const res = await fetch("/api/pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          html: html.value,
+          width: Number($("width").value),
+          mode: $("mode").value,
+          landscape: $("landscape").checked,
+          marginMm: Number($("margin").value),
+          baseUrl: $("baseUrl").value.trim(),
+          filename,
+        }),
+      });
+      if (!res.ok) {
+        let msg = `Error ${res.status}`;
+        try { msg = (await res.json()).error || msg; } catch {}
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = filename.replace(/\.[a-z0-9]+$/i, "") + ".pdf";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      setStatus(`Listo (${(blob.size / 1024).toFixed(0)} KB).`);
+    } catch (err) {
+      setStatus(err.message || String(err), true);
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  fitPreview();
+</script>
+</body>
+</html>
